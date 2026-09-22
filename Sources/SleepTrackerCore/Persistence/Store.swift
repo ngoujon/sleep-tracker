@@ -8,6 +8,7 @@ public final class Store {
 
     private let fileURL: URL
     private let settingsURL: URL
+    private let heartRateURL: URL
 
     private init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -15,6 +16,7 @@ public final class Store {
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         fileURL = base.appendingPathComponent("sessions.json")
         settingsURL = base.appendingPathComponent("settings.json")
+        heartRateURL = base.appendingPathComponent("heartrate.json")
     }
 
     public struct Settings: Codable {
@@ -32,6 +34,16 @@ public final class Store {
     public func saveSessions(_ sessions: [SleepSession]) {
         guard let data = try? JSONEncoder().encode(sessions) else { return }
         try? data.write(to: fileURL, options: .atomic)
+    }
+
+    public func loadHeartRateDays() -> [HeartRateDay] {
+        guard let data = try? Data(contentsOf: heartRateURL) else { return [] }
+        return (try? JSONDecoder().decode([HeartRateDay].self, from: data)) ?? []
+    }
+
+    public func saveHeartRateDays(_ days: [HeartRateDay]) {
+        guard let data = try? JSONEncoder().encode(days) else { return }
+        try? data.write(to: heartRateURL, options: .atomic)
     }
 
     public func loadSettings() -> Settings {

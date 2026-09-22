@@ -6,6 +6,7 @@ public enum ImportService {
 
     public struct ImportResult {
         public let sessions: [SleepSession]
+        public let heartRateDays: [HeartRateDay]
         public let sourceUsed: String
         public let dateOfBirth: Date?
         public let newNightsCount: Int
@@ -61,12 +62,19 @@ public enum ImportService {
         let merged = byNight.values.sorted { $0.nightOf < $1.nightOf }
         Store.shared.saveSessions(merged)
 
+        let builtHeartRateDays = HeartRateBuilder.build(from: parser.quantitySamples)
+        let existingHeartRateDays = Store.shared.loadHeartRateDays()
+        var byDate = Dictionary(uniqueKeysWithValues: existingHeartRateDays.map { ($0.date, $0) })
+        for day in builtHeartRateDays { byDate[day.date] = day }
+        let mergedHeartRateDays = byDate.values.sorted { $0.date < $1.date }
+        Store.shared.saveHeartRateDays(mergedHeartRateDays)
+
         var settings = Store.shared.loadSettings()
         settings.lastImportedSource = built.sourceUsed
         settings.lastImportDate = Date()
         Store.shared.saveSettings(settings)
 
-        return ImportResult(sessions: merged, sourceUsed: built.sourceUsed, dateOfBirth: parser.dateOfBirth, newNightsCount: newCount)
+        return ImportResult(sessions: merged, heartRateDays: mergedHeartRateDays, sourceUsed: built.sourceUsed, dateOfBirth: parser.dateOfBirth, newNightsCount: newCount)
     }
 
     private static func unzip(_ url: URL) throws -> (xml: URL, dir: URL) {

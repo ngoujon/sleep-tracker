@@ -3,13 +3,27 @@ import SwiftUI
 struct ScoreRingView: View {
     let score: Int
     let label: String
+    /// Defaults to "higher is better" (sleep score). Pass a custom mapping
+    /// for values where higher means worse (e.g. a stress level).
+    var colorForScore: (Int) -> Color = ScoreRingView.higherIsBetter
 
-    private var color: Color {
+    private var color: Color { colorForScore(score) }
+
+    static func higherIsBetter(_ score: Int) -> Color {
         switch score {
         case 90...: return .green
         case 70..<90: return .mint
         case 55..<70: return .yellow
         case 40..<55: return .orange
+        default: return .red
+        }
+    }
+
+    static func higherIsWorse(_ score: Int) -> Color {
+        switch score {
+        case ..<25: return .green
+        case 25..<50: return .yellow
+        case 50..<75: return .orange
         default: return .red
         }
     }

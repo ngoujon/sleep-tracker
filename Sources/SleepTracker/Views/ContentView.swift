@@ -5,7 +5,7 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if appState.sessions.isEmpty && !appState.isImporting {
+            if appState.sessions.isEmpty && appState.heartRateDays.isEmpty && !appState.isImporting {
                 EmptyStateView()
             } else if appState.isImporting {
                 ImportingView()
@@ -13,8 +13,12 @@ struct ContentView: View {
                 TabView {
                     TonightView()
                         .tabItem { Label("Cette nuit", systemImage: "moon.stars.fill") }
+                    StressView()
+                        .tabItem { Label("Stress", systemImage: "waveform.path.ecg") }
+                    HeartRateView()
+                        .tabItem { Label("Fréquence cardiaque", systemImage: "heart.fill") }
                     HistoryView()
-                        .tabItem { Label("Historique", systemImage: "chart.bar.fill") }
+                        .tabItem { Label("Historique sommeil", systemImage: "chart.bar.fill") }
                     SettingsView()
                         .tabItem { Label("Réglages", systemImage: "gearshape.fill") }
                 }

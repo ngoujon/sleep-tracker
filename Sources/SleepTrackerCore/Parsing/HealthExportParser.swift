@@ -2,10 +2,12 @@ import Foundation
 
 /// Streams an Apple Health `export.xml` file (SAX parsing, so multi-hundred-MB
 /// exports don't need to be loaded into memory as a DOM) and pulls out every
-/// `HKCategoryTypeIdentifierSleepAnalysis` record, plus the user's date of birth
-/// from the `<Me .../>` element if present.
+/// `HKCategoryTypeIdentifierSleepAnalysis` record, every heart-rate/HRV/respiratory
+/// record, plus the user's date of birth from the `<Me .../>` element if present.
+/// Both record families are collected in the same single pass over the file.
 public final class HealthExportParser: NSObject, XMLParserDelegate {
     public private(set) var samples: [SleepSample] = []
+    public private(set) var quantitySamples: [QuantitySample] = []
     public private(set) var dateOfBirth: Date?
 
     public override init() { super.init() }
@@ -55,17 +57,12 @@ public final class HealthExportParser: NSObject, XMLParserDelegate {
     public func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         switch elementName {
         case "Record":
-            guard attributeDict["type"] == "HKCategoryTypeIdentifierSleepAnalysis" else { return }
-            guard let value = attributeDict["value"],
-                  let startStr = attributeDict["startDate"],
-                  let endStr = attributeDict["endDate"],
-                  let start = Self.recordDateFormatter.date(from: startStr),
-                  let end = Self.recordDateFormatter.date(from: endStr),
-                  end > start else { return }
-            guard let stage = Self.stage(for: value) else { return }
-            let source = attributeDict["sourceName"] ?? "inconnue"
-            samples.append(SleepSample(stage: stage, start: start, end: end, source: source))
-            if samples.count % 500 == 0 { progressCallback?(samples.count) }
+            guard let type = attributeDict["type"] else { return }
+            if type == "HKCategoryTypeIdentifierSleepAnalysis" {
+                handleSleepRecord(attributeDict)
+            } else if let kind = Self.quantityKind(for: type) {
+                handleQuantityRecord(kind: kind, attributeDict)
+            }
         case "Me":
             if let dobStr = attributeDict["HKCharacteristicTypeIdentifierDateOfBirth"],
                let dob = Self.dobFormatter.date(from: dobStr) {
@@ -74,6 +71,31 @@ public final class HealthExportParser: NSObject, XMLParserDelegate {
         default:
             break
         }
+    }
+
+    private func handleSleepRecord(_ attributeDict: [String: String]) {
+        guard let value = attributeDict["value"],
+              let startStr = attributeDict["startDate"],
+              let endStr = attributeDict["endDate"],
+              let start = Self.recordDateFormatter.date(from: startStr),
+              let end = Self.recordDateFormatter.date(from: endStr),
+              end > start else { return }
+        guard let stage = Self.stage(for: value) else { return }
+        let source = attributeDict["sourceName"] ?? "inconnue"
+        samples.append(SleepSample(stage: stage, start: start, end: end, source: source))
+        if samples.count % 500 == 0 { progressCallback?(samples.count) }
+    }
+
+    private func handleQuantityRecord(kind: QuantitySample.Kind, _ attributeDict: [String: String]) {
+        guard let valueStr = attributeDict["value"],
+              let value = Double(valueStr),
+              let startStr = attributeDict["startDate"],
+              let endStr = attributeDict["endDate"],
+              let start = Self.recordDateFormatter.date(from: startStr),
+              let end = Self.recordDateFormatter.date(from: endStr) else { return }
+        let source = attributeDict["sourceName"] ?? "inconnue"
+        quantitySamples.append(QuantitySample(kind: kind, value: value, start: start, end: end, source: source))
+        if quantitySamples.count % 500 == 0 { progressCallback?(samples.count + quantitySamples.count) }
     }
 
     private static func stage(for hkValue: String) -> SleepSample.Stage? {
@@ -85,6 +107,16 @@ public final class HealthExportParser: NSObject, XMLParserDelegate {
         case "HKCategoryValueSleepAnalysisAsleepREM": return .rem
         case "HKCategoryValueSleepAnalysisAsleep", "HKCategoryValueSleepAnalysisAsleepUnspecified":
             return .asleepUnspecified
+        default: return nil
+        }
+    }
+
+    private static func quantityKind(for hkType: String) -> QuantitySample.Kind? {
+        switch hkType {
+        case "HKQuantityTypeIdentifierHeartRate": return .heartRate
+        case "HKQuantityTypeIdentifierRestingHeartRate": return .restingHeartRate
+        case "HKQuantityTypeIdentifierHeartRateVariabilitySDNN": return .hrvSDNN
+        case "HKQuantityTypeIdentifierRespiratoryRate": return .respiratoryRate
         default: return nil
         }
     }

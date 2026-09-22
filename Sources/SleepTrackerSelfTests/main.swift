@@ -160,6 +160,95 @@ do {
     check("gap under 3h merged into a single session", result.sessions.count == 1)
 }
 
+// MARK: - HeartRateBuilder
+
+print("HeartRateBuilder")
+
+func dayDate(_ offset: Int) -> Date {
+    Calendar.current.date(byAdding: .day, value: offset, to: date(0, day: 1))!
+}
+
+do {
+    let d0 = dayDate(0)
+    let samples: [QuantitySample] = [
+        QuantitySample(kind: .heartRate, value: 60, start: d0.addingTimeInterval(3600), end: d0.addingTimeInterval(3600), source: "Watch"),
+        QuantitySample(kind: .heartRate, value: 80, start: d0.addingTimeInterval(7200), end: d0.addingTimeInterval(7200), source: "Watch"),
+        QuantitySample(kind: .heartRate, value: 100, start: d0.addingTimeInterval(10800), end: d0.addingTimeInterval(10800), source: "Watch"),
+        QuantitySample(kind: .restingHeartRate, value: 55, start: d0, end: d0, source: "Watch"),
+        QuantitySample(kind: .hrvSDNN, value: 42, start: d0.addingTimeInterval(3600), end: d0.addingTimeInterval(3600), source: "Watch"),
+        QuantitySample(kind: .respiratoryRate, value: 14, start: d0.addingTimeInterval(3600), end: d0.addingTimeInterval(3600), source: "Watch")
+    ]
+    let days = HeartRateBuilder.build(from: samples)
+    check("one day built", days.count == 1)
+    if let day = days.first {
+        check("min bpm is 60", approx(day.minBPM ?? -1, 60))
+        check("max bpm is 100", approx(day.maxBPM ?? -1, 100))
+        check("avg bpm is 80", approx(day.avgBPM ?? -1, 80))
+        check("resting bpm is 55", approx(day.restingBPM ?? -1, 55))
+        check("hrv sdnn is 42", approx(day.hrvSDNN ?? -1, 42))
+        check("respiratory rate is 14", approx(day.respiratoryRate ?? -1, 14))
+    }
+}
+
+// MARK: - StressScoreEngine
+
+print("StressScoreEngine")
+
+func makeHeartDay(offset: Int, resting: Double?, hrv: Double?) -> HeartRateDay {
+    HeartRateDay(date: dayDate(offset), minBPM: nil, maxBPM: nil, avgBPM: nil, restingBPM: resting, hrvSDNN: hrv, respiratoryRate: nil)
+}
+
+do {
+    // Only 3 days of history before target -> below the 5-day minimum baseline.
+    var days = (1...3).map { makeHeartDay(offset: -$0, resting: 55, hrv: 45) }
+    days.append(makeHeartDay(offset: 0, resting: 55, hrv: 45))
+    let score = StressScoreEngine.score(for: days, at: dayDate(0))
+    check("insufficient baseline history returns nil", score == nil)
+}
+
+do {
+    // Stable baseline (55 bpm resting, 45 ms HRV, zero variance), today matches exactly -> low stress.
+    var days = (1...10).map { makeHeartDay(offset: -$0, resting: 55, hrv: 45) }
+    days.append(makeHeartDay(offset: 0, resting: 55, hrv: 45))
+    let score = StressScoreEngine.score(for: days, at: dayDate(0))
+    check("stress score computed when baseline is sufficient", score != nil)
+    if let score {
+        check("today matching baseline exactly scores low stress (got \(score.level))", score.level <= 10)
+        check("no caveats when both signals available", score.caveats.isEmpty)
+        check("two components (HRV + RHR)", score.components.count == 2)
+    }
+}
+
+do {
+    // Baseline varies naturally (55±5 bpm, 45±5 ms), today is a clear outlier:
+    // resting HR way up, HRV way down -> high stress.
+    var days: [HeartRateDay] = []
+    for i in 1...14 {
+        let jitter = Double(i % 3) - 1 // -1, 0, 1
+        days.append(makeHeartDay(offset: -i, resting: 55 + jitter * 3, hrv: 45 + jitter * 4))
+    }
+    days.append(makeHeartDay(offset: 0, resting: 75, hrv: 20))
+    let score = StressScoreEngine.score(for: days, at: dayDate(0))
+    check("stress score computed for outlier day", score != nil)
+    if let score {
+        check("elevated RHR + depressed HRV scores high stress (got \(score.level))", score.level >= 70)
+    }
+}
+
+do {
+    // Only HRV available (no resting HR data at all) -> still scores, with a caveat.
+    var days = (1...10).map { i in
+        HeartRateDay(date: dayDate(-i), minBPM: nil, maxBPM: nil, avgBPM: nil, restingBPM: nil, hrvSDNN: 45, respiratoryRate: nil)
+    }
+    days.append(HeartRateDay(date: dayDate(0), minBPM: nil, maxBPM: nil, avgBPM: nil, restingBPM: nil, hrvSDNN: 20, respiratoryRate: nil))
+    let score = StressScoreEngine.score(for: days, at: dayDate(0))
+    check("scores with only HRV available", score != nil)
+    if let score {
+        check("single component when only HRV available", score.components.count == 1)
+        check("caveat mentions missing resting heart rate", score.caveats.contains { $0.contains("Fréquence cardiaque au repos") })
+    }
+}
+
 print("")
 print("\(ran - failures)/\(ran) checks passed")
 if failures > 0 {
