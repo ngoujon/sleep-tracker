@@ -23,6 +23,10 @@ public final class Store {
         public var ageBracket: AgeBracket = .adult
         public var lastImportedSource: String?
         public var lastImportDate: Date?
+        /// Path + modification date of an auto-detected import candidate the
+        /// user explicitly dismissed, so it doesn't keep resurfacing every launch.
+        public var dismissedCandidatePath: String?
+        public var dismissedCandidateModDate: Date?
         public init() {}
     }
 

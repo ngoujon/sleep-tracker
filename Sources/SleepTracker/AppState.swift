@@ -15,6 +15,9 @@ final class AppState: ObservableObject {
     @Published var lastImportSource: String?
     @Published var selectedNightOf: Date?
     @Published var selectedHeartDate: Date?
+    @Published var detectedCandidate: AutoImportScanner.Candidate?
+
+    private var activationObserver: NSObjectProtocol?
 
     init() {
         let settings = Store.shared.loadSettings()
@@ -24,6 +27,51 @@ final class AppState: ObservableObject {
         self.selectedNightOf = self.sessions.last?.nightOf
         self.heartRateDays = Store.shared.loadHeartRateDays().sorted { $0.date < $1.date }
         self.selectedHeartDate = Self.bestDefaultDate(in: self.heartRateDays)
+
+        scanForCandidateExport()
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.scanForCandidateExport() }
+        }
+    }
+
+    deinit {
+        if let activationObserver {
+            NotificationCenter.default.removeObserver(activationObserver)
+        }
+    }
+
+    /// Rescans Téléchargements/Bureau for a recent Health export (see
+    /// `AutoImportScanner`). Called at launch and whenever the app regains
+    /// focus, so a file AirDropped while Sommeil was already open gets picked
+    /// up as soon as the user switches back to it.
+    func scanForCandidateExport() {
+        guard let found = AutoImportScanner.scan() else {
+            detectedCandidate = nil
+            return
+        }
+        let settings = Store.shared.loadSettings()
+        if settings.dismissedCandidatePath == found.url.path, settings.dismissedCandidateModDate == found.modifiedAt {
+            detectedCandidate = nil
+            return
+        }
+        detectedCandidate = found
+    }
+
+    func dismissDetectedCandidate() {
+        guard let detectedCandidate else { return }
+        var settings = Store.shared.loadSettings()
+        settings.dismissedCandidatePath = detectedCandidate.url.path
+        settings.dismissedCandidateModDate = detectedCandidate.modifiedAt
+        Store.shared.saveSettings(settings)
+        self.detectedCandidate = nil
+    }
+
+    func importDetectedCandidate() {
+        guard let detectedCandidate else { return }
+        importFile(at: detectedCandidate.url)
+        self.detectedCandidate = nil
     }
 
     /// The most recent day that actually carries a resting-HR or HRV reading,
@@ -111,6 +159,15 @@ final class AppState: ObservableObject {
                         let years = Calendar.current.dateComponents([.year], from: dob, to: Date()).year ?? 30
                         self.setAgeBracket(AgeBracket.from(age: years))
                     }
+
+                    // Don't re-suggest the file we just imported.
+                    if let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate {
+                        var settings = Store.shared.loadSettings()
+                        settings.dismissedCandidatePath = url.path
+                        settings.dismissedCandidateModDate = modDate
+                        Store.shared.saveSettings(settings)
+                    }
+                    self.scanForCandidateExport()
                 }
             } catch {
                 await MainActor.run { [weak self] in
